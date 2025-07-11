@@ -65,12 +65,44 @@ async function sendToContent(tab, payload) {
   }
 }
 
+// Retrieve raw selection text (with newlines) from the tab via the content script
+async function getSelectionFromTab(tab) {
+  return new Promise((resolve) => {
+    if (!canInject(tab)) {
+      resolve("");
+      return;
+    }
+
+    // Try sending a message first – if content script not yet present, we'll inject then retry
+    const request = { action: "getSelectionText" };
+    chrome.tabs.sendMessage(tab.id, request, (response) => {
+      if (chrome.runtime.lastError || !response) {
+        // Inject content script and retry once
+        chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["contentScript.js"] }, () => {
+          chrome.tabs.sendMessage(tab.id, request, (resp2) => {
+            if (chrome.runtime.lastError || !resp2) {
+              resolve("");
+            } else {
+              resolve(resp2.selectionText || "");
+            }
+          });
+        });
+      } else {
+        resolve(response.selectionText || "");
+      }
+    });
+  });
+}
+
 chrome.contextMenus.onClicked.addListener((info, tab) => {
-  if (info.menuItemId === "speakSelection" && info.selectionText) {
+  if (info.menuItemId === "speakSelection") {
     // 先に既存の再生を停止
     sendToContent(tab, { action: "stopAudio" });
     (async () => {
       try {
+        const rawSelection = await getSelectionFromTab(tab);
+        const targetText = rawSelection && rawSelection.trim() ? rawSelection : info.selectionText || "";
+        if (!targetText) return;
         const voicePref = await chrome.storage.local.get(["voice"]);
         const speakerName = voicePref.voice?.speakerName || "Anneli";
         const styleName = voicePref.voice?.styleName || "ノーマル";
@@ -78,7 +110,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
         if (!id) throw new Error("Style ID not found");
         await preload(id);
         const speed = voicePref.voice?.speed || 1;
-        const chunks = splitTextIntoChunks(info.selectionText);
+        const chunks = splitTextIntoChunks(targetText);
         for (const chunk of chunks) {
           const buf = await synthesize(chunk, id, speed);
           const b64 = arrayBufferToBase64(buf);

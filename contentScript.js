@@ -10,7 +10,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     enqueue(message.base64);
   } else if (message.action === "stopAudio") {
     stopAll();
+  } else if (message.action === "getSelectionText") {
+    // Respond with the raw selection text (includes newlines)
+    try {
+      const selText = window.getSelection().toString();
+      sendResponse({ selectionText: selText });
+    } catch (e) {
+      console.error("[ContentScript] getSelectionText error:", e);
+      sendResponse({ selectionText: "" });
+    }
   }
+  return true;
 });
 
 async function enqueue(base64) {
