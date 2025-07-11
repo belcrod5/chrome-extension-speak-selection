@@ -7,6 +7,8 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 const BASE = "http://127.0.0.1:10101";
+// Keep track of which tab already has the content script injected
+const injectedTabs = new Set();
 
 async function getStyleIdByName(name = "Anneli", style = "ノーマル") {
   const speakers = await fetch(`${BASE}/speakers`).then((r) => r.json());
@@ -49,18 +51,31 @@ async function sendToContent(tab, payload) {
     return;
   }
 
+  // Helper to actually send the message
+  const doSend = () => new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(tab.id, payload, { frameId: 0 }, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(chrome.runtime.lastError);
+      } else {
+        resolve(response);
+      }
+    });
+  });
+
   try {
-    await chrome.tabs.sendMessage(tab.id, payload);
+    await doSend();
   } catch (err) {
-    // No receiver – inject script then retry
-    try {
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        files: ["contentScript.js"],
-      });
-      await chrome.tabs.sendMessage(tab.id, payload);
-    } catch (e) {
-      console.error("Failed to inject content script or send message", e);
+    // If the script for the tab hasn't been injected yet, inject once then retry
+    if (!injectedTabs.has(tab.id)) {
+      try {
+        await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds: [0] }, files: ["contentScript.js"] });
+        injectedTabs.add(tab.id);
+        await doSend();
+      } catch (e2) {
+        console.error("[Background] Failed to inject content script or send message", e2);
+      }
+    } else {
+      console.error("[Background] sendMessage failed even after injection", err);
     }
   }
 }
@@ -78,8 +93,8 @@ async function getSelectionFromTab(tab) {
     chrome.tabs.sendMessage(tab.id, request, (response) => {
       if (chrome.runtime.lastError || !response) {
         // Inject content script and retry once
-        chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["contentScript.js"] }, () => {
-          chrome.tabs.sendMessage(tab.id, request, (resp2) => {
+        chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds: [0] }, files: ["contentScript.js"] }, () => {
+          chrome.tabs.sendMessage(tab.id, request, { frameId: 0 }, (resp2) => {
             if (chrome.runtime.lastError || !resp2) {
               resolve("");
             } else {
@@ -107,6 +122,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
       try {
         const rawSelection = await getSelectionFromTab(tab);
         const targetText = rawSelection && rawSelection.trim() ? rawSelection : info.selectionText || "";
+        console.log("[Background] targetText obtained (length):", targetText.length);
         if (!targetText) return;
         const voicePref = await chrome.storage.local.get(["voice"]);
         const speakerName = voicePref.voice?.speakerName || "Anneli";
@@ -116,9 +132,12 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
         await preload(id);
         const speed = voicePref.voice?.speed || 1;
         const chunks = splitTextIntoChunks(targetText);
+        console.log("[Background] chunks prepared:", chunks);
         for (const chunk of chunks) {
+          console.log("[Background] synthesizing chunk:", chunk);
           const buf = await synthesize(chunk, id, speed);
           const b64 = arrayBufferToBase64(buf);
+          console.log("[Background] sending chunk to content script (bytes):", b64.length);
           sendToContent(tab, {
             action: "queueAudio",
             base64: b64,
