@@ -18,11 +18,14 @@
     var queue = window.__speakQueue || (window.__speakQueue = []);
     var isPlaying = window.__speakIsPlaying || false;
     var currentSource = window.__speakCurrentSource || null;
+    // Subtitle element for on-screen captions
+    var subtitleEl = window.__speakSubtitleEl || (window.__speakSubtitleEl = createSubtitleElement());
     console.log("[ContentScript] initialized, existing queue length:", queue.length);
 
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (message.action === "queueAudio" && message.base64) {
-        enqueue(message.base64);
+        // Pass along associated text (if any) for subtitle display
+        enqueue(message.base64, message.text || "");
         // no async response needed
         return; // stop further processing
       } else if (message.action === "stopAudio") {
@@ -44,12 +47,12 @@
       }
     });
 
-    async function enqueue(base64) {
+    async function enqueue(base64, text) {
       console.log("[ContentScript] enqueue called, queue length before push:", queue.length);
       try {
         const buffer = base64ToArrayBuffer(base64);
         const audioBuffer = await audioCtx.decodeAudioData(buffer);
-        queue.push(audioBuffer);
+        queue.push({ buffer: audioBuffer, text });
         playNext();
       } catch (e) {
         console.error("[ContentScript] enqueue decode failed", e);
@@ -59,7 +62,17 @@
     function playNext() {
       console.log("[ContentScript] playNext invoked, isPlaying:", isPlaying, "queue length:", queue.length);
       if (isPlaying || queue.length === 0) return;
-      const buf = queue.shift();
+      const item = queue.shift();
+      const buf = item.buffer || item; // compatibility with older queue entries
+      const speechText = item.text || "";
+
+      if (speechText) {
+        subtitleEl.textContent = speechText;
+        subtitleEl.style.display = "block";
+      } else {
+        subtitleEl.style.display = "none";
+      }
+
       const source = audioCtx.createBufferSource();
       source.buffer = buf;
       source.connect(audioCtx.destination);
@@ -68,6 +81,7 @@
         isPlaying = false;
         console.log("[ContentScript] playback ended, remaining queue length:", queue.length);
         if (queue.length === 0) {
+          hideSubtitle();
           sendStatus("stopped");
         }
         playNext();
@@ -89,6 +103,7 @@
         currentSource = null;
       }
       isPlaying = false;
+      hideSubtitle();
       sendStatus("stopped");
     }
 
@@ -112,6 +127,32 @@
         bytes[i] = binary.charCodeAt(i);
       }
       return bytes.buffer;
+    }
+
+    function createSubtitleElement() {
+      const el = document.createElement("div");
+      el.style.position = "fixed";
+      el.style.bottom = "5%";
+      el.style.left = "50%";
+      el.style.transform = "translateX(-50%)";
+      el.style.background = "rgba(0,0,0,0.5)";
+      el.style.color = "#fff";
+      el.style.padding = "4px 12px";
+      el.style.borderRadius = "4px";
+      el.style.zIndex = "2147483647";
+      el.style.pointerEvents = "none";
+      el.style.whiteSpace = "pre-wrap";
+      el.style.fontSize = "1.25rem";
+      el.style.textAlign = "center";
+      el.style.textShadow = "0 0 4px rgba(0,0,0,0.8)";
+      el.style.maxWidth = "90%";
+      el.style.display = "none";
+      document.body.appendChild(el);
+      return el;
+    }
+
+    function hideSubtitle() {
+      if (subtitleEl) subtitleEl.style.display = "none";
     }
   }
 )(); 

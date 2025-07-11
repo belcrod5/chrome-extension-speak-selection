@@ -141,6 +141,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
           sendToContent(tab, {
             action: "queueAudio",
             base64: b64,
+            text: chunk,
           });
         }
       } catch (e) {
