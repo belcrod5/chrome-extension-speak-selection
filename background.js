@@ -134,8 +134,17 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
         const chunks = splitTextIntoChunks(targetText);
         console.log("[Background] chunks prepared:", chunks);
         for (const chunk of chunks) {
-          console.log("[Background] synthesizing chunk:", chunk);
-          const buf = await synthesize(chunk, id, speed);
+          // Original chunk may include punctuation for display; strip it for synthesis but keep for caption
+          const synthText = chunk.replace(/[。、」]+$/g, "").trim();
+          
+          // 「·」だけ、あるいは空文字になった場合はスキップ
+          if (!synthText || /^[·]+$/.test(synthText)) {
+            continue;
+          }
+
+          console.log("[Background] synthesizing chunk (clean):", synthText, "display:", chunk);
+
+          const buf = await synthesize(synthText, id, speed);
           const b64 = arrayBufferToBase64(buf);
           console.log("[Background] sending chunk to content script (bytes):", b64.length);
           sendToContent(tab, {
@@ -175,10 +184,10 @@ function arrayBufferToBase64(buffer) {
 }
 
 function splitTextIntoChunks(text) {
-  // Split by Japanese punctuation and newlines (including \r\n)
-  const separators = /[。、\r\n]|\s{2,}|\u3000/g;
-  const raw = text.split(separators);
-  const chunks = raw.map((s) => s.trim()).filter(Boolean);
+  // Keep punctuation (、 。 」) at the end of each chunk for caption display.
+  // Match a run of non-separator characters followed by an optional punctuation mark.
+  const tokens = text.match(/[^。、」\s\u3000\r\n]+[。、」]?/g) || [];
+  const chunks = tokens.map((s) => s.trim());
   console.log(`[Background] split into ${chunks.length} chunk(s):`, chunks);
   return chunks;
 } 
