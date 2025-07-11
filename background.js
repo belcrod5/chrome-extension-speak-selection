@@ -1,0 +1,125 @@
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.contextMenus.create({
+    id: "speakSelection",
+    title: "選択したテキストを読み上げる",
+    contexts: ["selection"],
+  });
+});
+
+const BASE = "http://127.0.0.1:10101";
+
+async function getStyleIdByName(name = "Anneli", style = "ノーマル") {
+  const speakers = await fetch(`${BASE}/speakers`).then((r) => r.json());
+  const sp = speakers.find((s) => s.name === name);
+  return sp?.styles.find((st) => st.name === style)?.id;
+}
+
+async function preload(id) {
+  await fetch(`${BASE}/initialize_speaker?speaker=${id}&skip_reinit=false`, {
+    method: "POST",
+  });
+}
+
+async function synthesize(text, id, speed=1) {
+  const query = await fetch(
+    `${BASE}/audio_query?text=${encodeURIComponent(text)}&speaker=${id}`,
+    { method: "POST" }
+  ).then((r) => r.json());
+
+  query.speedScale = speed;
+  const arrayBuffer = await fetch(`${BASE}/synthesis?speaker=${id}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(query),
+  }).then((r) => r.arrayBuffer());
+
+  return arrayBuffer;
+}
+
+function canInject(tab) {
+  if (!tab || !tab.url) return false;
+  // Skip Chrome internal pages and extension pages
+  const disallowed = ["chrome://", "chrome-extension://", "edge://", "about:"]; // for other browsers too
+  return !disallowed.some((prefix) => tab.url.startsWith(prefix));
+}
+
+async function sendToContent(tab, payload) {
+  if (!canInject(tab)) {
+    console.warn("Cannot inject content script into this page:", tab.url);
+    return;
+  }
+
+  try {
+    await chrome.tabs.sendMessage(tab.id, payload);
+  } catch (err) {
+    // No receiver – inject script then retry
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ["contentScript.js"],
+      });
+      await chrome.tabs.sendMessage(tab.id, payload);
+    } catch (e) {
+      console.error("Failed to inject content script or send message", e);
+    }
+  }
+}
+
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  if (info.menuItemId === "speakSelection" && info.selectionText) {
+    // 先に既存の再生を停止
+    sendToContent(tab, { action: "stopAudio" });
+    (async () => {
+      try {
+        const voicePref = await chrome.storage.local.get(["voice"]);
+        const speakerName = voicePref.voice?.speakerName || "Anneli";
+        const styleName = voicePref.voice?.styleName || "ノーマル";
+        const id = await getStyleIdByName(speakerName, styleName);
+        if (!id) throw new Error("Style ID not found");
+        await preload(id);
+        const speed = voicePref.voice?.speed || 1;
+        const chunks = splitTextIntoChunks(info.selectionText);
+        for (const chunk of chunks) {
+          const buf = await synthesize(chunk, id, speed);
+          const b64 = arrayBufferToBase64(buf);
+          sendToContent(tab, {
+            action: "queueAudio",
+            base64: b64,
+          });
+        }
+      } catch (e) {
+        console.error("Speech synthesis failed", e);
+      }
+    })();
+  }
+});
+
+// popup からの停止要求
+chrome.runtime.onMessage.addListener((message, sender) => {
+  if (message.action === "stopAll") {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]) {
+        sendToContent(tabs[0], { action: "stopAudio" });
+      }
+    });
+  }
+});
+
+function arrayBufferToBase64(buffer) {
+  let binary = "";
+  const bytes = new Uint8Array(buffer);
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+function splitTextIntoChunks(text) {
+  // Split by Japanese punctuation and newlines (including \r\n)
+  const separators = /[。、\r\n]|\s{2,}|\u3000/g;
+  const raw = text.split(separators);
+  const chunks = raw.map((s) => s.trim()).filter(Boolean);
+  console.log(`[Background] split into ${chunks.length} chunk(s):`, chunks);
+  return chunks;
+} 
