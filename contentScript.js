@@ -10,6 +10,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     enqueue(message.base64);
   } else if (message.action === "stopAudio") {
     stopAll();
+  } else if (message.action === "showAlert" && message.message) {
+    alert(message.message);
   } else if (message.action === "getSelectionText") {
     // Respond with the raw selection text (includes newlines)
     try {

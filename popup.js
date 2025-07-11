@@ -49,6 +49,7 @@ async function init() {
   } catch (e) {
     statusEl.textContent = `エラー: ${e}`;
     statusEl.style.color = "red";
+    alert("AiviSpeechが起動していません。AiviSpeechを起動してから拡張機能をご利用ください。");
   }
 }
 
@@ -96,6 +97,7 @@ async function testVoice() {
   } catch (e) {
     statusEl.textContent = `エラー: ${e}`;
     statusEl.style.color = "red";
+    alert("AiviSpeechが起動していません。AiviSpeechを起動してから拡張機能をご利用ください。");
   }
 }
 

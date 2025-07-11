@@ -94,6 +94,11 @@ async function getSelectionFromTab(tab) {
   });
 }
 
+// Utility: ask content script to show an alert in the page context
+function showAlert(tab, message) {
+  sendToContent(tab, { action: "showAlert", message });
+}
+
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === "speakSelection") {
     // 先に既存の再生を停止
@@ -121,6 +126,8 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
         }
       } catch (e) {
         console.error("Speech synthesis failed", e);
+        // AiviSpeech server may not be running – notify the user
+        showAlert(tab, "AiviSpeechが起動していません。AiviSpeechを起動してから再度お試しください。");
       }
     })();
   }
