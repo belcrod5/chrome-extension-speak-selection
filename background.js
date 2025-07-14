@@ -10,6 +10,9 @@ const BASE = "http://127.0.0.1:10101";
 // Keep track of which tab already has the content script injected
 const injectedTabs = new Set();
 
+// Global flag to cancel an in-progress speech dispatch sequence initiated from the context-menu
+let cancelSpeaking = false;
+
 async function getStyleIdByName(name = "Anneli", style = "ノーマル") {
   const speakers = await fetch(`${BASE}/speakers`).then((r) => r.json());
   const sp = speakers.find((s) => s.name === name);
@@ -118,6 +121,8 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === "speakSelection") {
     // 先に既存の再生を停止
     sendToContent(tab, { action: "stopAudio" });
+    // Reset cancellation flag since we are starting a new read-aloud sequence
+    cancelSpeaking = false;
     (async () => {
       try {
         const rawSelection = await getSelectionFromTab(tab);
@@ -134,6 +139,10 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
         const chunks = splitTextIntoChunks(targetText);
         console.log("[Background] chunks prepared:", chunks);
         for (const chunk of chunks) {
+          if (cancelSpeaking) {
+            console.log("[Background] Speech cancelled – stopping further synthesis");
+            break;
+          }
           // Original chunk may include punctuation for display; strip it for synthesis but keep for caption
           const synthText = chunk.replace(/[。、」]+$/g, "").trim();
           
@@ -145,6 +154,10 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
           console.log("[Background] synthesizing chunk (clean):", synthText, "display:", chunk);
 
           const buf = await synthesize(synthText, id, speed);
+          if (cancelSpeaking) {
+            console.log("[Background] Speech cancelled after synthesis – not sending chunk to content script");
+            break;
+          }
           const b64 = arrayBufferToBase64(buf);
           console.log("[Background] sending chunk to content script (bytes):", b64.length);
           sendToContent(tab, {
@@ -165,6 +178,8 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 // popup からの停止要求
 chrome.runtime.onMessage.addListener((message, sender) => {
   if (message.action === "stopAll") {
+    // Set cancellation flag so any ongoing synthesis loop stops
+    cancelSpeaking = true;
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0]) {
         sendToContent(tabs[0], { action: "stopAudio" });
@@ -185,8 +200,9 @@ function arrayBufferToBase64(buffer) {
 
 function splitTextIntoChunks(text) {
   // Keep punctuation (、 。 」) at the end of each chunk for caption display.
-  // Match a run of non-separator characters followed by an optional punctuation mark.
-  const tokens = text.match(/[^。、」\s\u3000\r\n]+[。、」]?/g) || [];
+  // Match a run of characters until a Japanese punctuation mark or newline, but DO NOT
+  // split on regular (half-width) spaces so phrases like "Hello world" stay together.
+  const tokens = text.match(/[^。、」\r\n]+[。、」]?/g) || [];
   const chunks = tokens.map((s) => s.trim());
   console.log(`[Background] split into ${chunks.length} chunk(s):`, chunks);
   return chunks;
