@@ -188,6 +188,50 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   }
 });
 
+function safeUpdateMenu(can) {
+  const title = can
+    ? "選択したテキストを読み上げる"
+    : "選択したテキストを読み上げる（このページでは不可）";
+
+  chrome.contextMenus.update("speakSelection", { title }, () => {
+    if (chrome.runtime.lastError) {
+      // createしなおし（id衝突は無視。存在しない時だけ生きる）
+      chrome.contextMenus.create({
+        id: "speakSelection",
+        title,
+        contexts: ["selection"],
+      }, () => { void chrome.runtime.lastError; });
+    }
+  });
+}
+
+function updateMenuTitleForTab(tabId) {
+  if (typeof tabId !== "number") return;
+  chrome.tabs.get(tabId, (tab) => {
+    if (chrome.runtime.lastError) return;
+    console.log(tab)
+    const can = canInject(tab);
+    safeUpdateMenu(can);
+  });
+}
+
+// Update when the active tab changes
+chrome.tabs.onActivated.addListener(({ tabId }) => {
+  updateMenuTitleForTab(tabId);
+});
+
+// Update when a tab finishes loading (URL change)
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status === "complete") {
+    updateMenuTitleForTab(tabId);
+  }
+});
+
+// Also run once at startup for the current active tab
+chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+  if (tabs[0]) updateMenuTitleForTab(tabs[0].id);
+});
+
 function arrayBufferToBase64(buffer) {
   let binary = "";
   const bytes = new Uint8Array(buffer);
