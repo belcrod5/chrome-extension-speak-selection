@@ -154,5 +154,21 @@
     function hideSubtitle() {
       if (subtitleEl) subtitleEl.style.display = "none";
     }
+
+    // Command + Left Click to speak selection
+    document.addEventListener("mousedown", (event) => {
+      // Check for Command (Mac) or Control (Windows) key + Left Click
+      if ((event.metaKey || event.ctrlKey) && event.button === 0) {
+        const selection = window.getSelection();
+        const text = selection.toString().trim();
+
+        if (text) {
+          // If text is selected, speak it and prevent default behavior (e.g. opening links or clearing selection)
+          event.preventDefault();
+          event.stopPropagation();
+          chrome.runtime.sendMessage({ action: "speakText", text: text });
+        }
+      }
+    }, true); // Capture phase
   }
 )(); 

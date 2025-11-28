@@ -46,6 +46,11 @@ async function init() {
       chrome.runtime.sendMessage({ action: "stopAll" });
       statusEl.textContent = "停止指示を送信しました";
     });
+
+    document.getElementById("read-selection").addEventListener("click", () => {
+      chrome.runtime.sendMessage({ action: "speakSelection" });
+      statusEl.textContent = "読み上げ指示を送信しました";
+    });
   } catch (e) {
     statusEl.textContent = `エラー: ${e}`;
     statusEl.style.color = "red";
@@ -109,7 +114,7 @@ async function getStyleIdByName(name, style) {
 async function preload(id) {
   await fetch(`${BASE}/initialize_speaker?speaker=${id}&skip_reinit=false`, { method: "POST" });
 }
-async function synthesize(text, id, speed=1) {
+async function synthesize(text, id, speed = 1) {
   const query = await fetch(`${BASE}/audio_query?text=${encodeURIComponent(text)}&speaker=${id}`, { method: "POST" }).then((r) => r.json());
   query.speedScale = speed;
   return await fetch(`${BASE}/synthesis?speaker=${id}`, {

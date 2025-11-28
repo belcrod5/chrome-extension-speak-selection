@@ -117,65 +117,75 @@ function showAlert(tab, message) {
   sendToContent(tab, { action: "showAlert", message });
 }
 
+async function processSpeakRequest(tab, providedText = null) {
+  // 先に既存の再生を停止
+  sendToContent(tab, { action: "stopAudio" });
+  // Reset cancellation flag since we are starting a new read-aloud sequence
+  cancelSpeaking = false;
+
+  try {
+    let targetText = providedText;
+    if (!targetText) {
+      const rawSelection = await getSelectionFromTab(tab);
+      targetText = rawSelection && rawSelection.trim() ? rawSelection : "";
+    }
+    
+    console.log("[Background] targetText obtained (length):", targetText.length);
+    if (!targetText) return;
+
+    const voicePref = await chrome.storage.local.get(["voice"]);
+    const speakerName = voicePref.voice?.speakerName || "Anneli";
+    const styleName = voicePref.voice?.styleName || "ノーマル";
+    const id = await getStyleIdByName(speakerName, styleName);
+    if (!id) throw new Error("Style ID not found");
+
+    await preload(id);
+    const speed = voicePref.voice?.speed || 1;
+    const chunks = splitTextIntoChunks(targetText);
+    console.log("[Background] chunks prepared:", chunks);
+
+    for (const chunk of chunks) {
+      if (cancelSpeaking) {
+        console.log("[Background] Speech cancelled – stopping further synthesis");
+        break;
+      }
+      // Original chunk may include punctuation for display; strip it for synthesis but keep for caption
+      const synthText = chunk.replace(/[。、」]+$/g, "").trim();
+      
+      // 「·」だけ、あるいは空文字になった場合はスキップ
+      if (!synthText || /^[·]+$/.test(synthText)) {
+        continue;
+      }
+
+      console.log("[Background] synthesizing chunk (clean):", synthText, "display:", chunk);
+
+      const buf = await synthesize(synthText, id, speed);
+      if (cancelSpeaking) {
+        console.log("[Background] Speech cancelled after synthesis – not sending chunk to content script");
+        break;
+      }
+      const b64 = arrayBufferToBase64(buf);
+      console.log("[Background] sending chunk to content script (bytes):", b64.length);
+      sendToContent(tab, {
+        action: "queueAudio",
+        base64: b64,
+        text: chunk,
+      });
+    }
+  } catch (e) {
+    console.error("Speech synthesis failed", e);
+    // AiviSpeech server may not be running – notify the user
+    showAlert(tab, "AiviSpeechが起動していません。AiviSpeechを起動してから再度お試しください。");
+  }
+}
+
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === "speakSelection") {
-    // 先に既存の再生を停止
-    sendToContent(tab, { action: "stopAudio" });
-    // Reset cancellation flag since we are starting a new read-aloud sequence
-    cancelSpeaking = false;
-    (async () => {
-      try {
-        const rawSelection = await getSelectionFromTab(tab);
-        const targetText = rawSelection && rawSelection.trim() ? rawSelection : info.selectionText || "";
-        console.log("[Background] targetText obtained (length):", targetText.length);
-        if (!targetText) return;
-        const voicePref = await chrome.storage.local.get(["voice"]);
-        const speakerName = voicePref.voice?.speakerName || "Anneli";
-        const styleName = voicePref.voice?.styleName || "ノーマル";
-        const id = await getStyleIdByName(speakerName, styleName);
-        if (!id) throw new Error("Style ID not found");
-        await preload(id);
-        const speed = voicePref.voice?.speed || 1;
-        const chunks = splitTextIntoChunks(targetText);
-        console.log("[Background] chunks prepared:", chunks);
-        for (const chunk of chunks) {
-          if (cancelSpeaking) {
-            console.log("[Background] Speech cancelled – stopping further synthesis");
-            break;
-          }
-          // Original chunk may include punctuation for display; strip it for synthesis but keep for caption
-          const synthText = chunk.replace(/[。、」]+$/g, "").trim();
-          
-          // 「·」だけ、あるいは空文字になった場合はスキップ
-          if (!synthText || /^[·]+$/.test(synthText)) {
-            continue;
-          }
-
-          console.log("[Background] synthesizing chunk (clean):", synthText, "display:", chunk);
-
-          const buf = await synthesize(synthText, id, speed);
-          if (cancelSpeaking) {
-            console.log("[Background] Speech cancelled after synthesis – not sending chunk to content script");
-            break;
-          }
-          const b64 = arrayBufferToBase64(buf);
-          console.log("[Background] sending chunk to content script (bytes):", b64.length);
-          sendToContent(tab, {
-            action: "queueAudio",
-            base64: b64,
-            text: chunk,
-          });
-        }
-      } catch (e) {
-        console.error("Speech synthesis failed", e);
-        // AiviSpeech server may not be running – notify the user
-        showAlert(tab, "AiviSpeechが起動していません。AiviSpeechを起動してから再度お試しください。");
-      }
-    })();
+    processSpeakRequest(tab, null);
   }
 });
 
-// popup からの停止要求
+// popup / content script からの要求
 chrome.runtime.onMessage.addListener((message, sender) => {
   if (message.action === "stopAll") {
     // Set cancellation flag so any ongoing synthesis loop stops
@@ -185,6 +195,18 @@ chrome.runtime.onMessage.addListener((message, sender) => {
         sendToContent(tabs[0], { action: "stopAudio" });
       }
     });
+  } else if (message.action === "speakSelection") {
+    // Popup button trigger
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]) {
+        processSpeakRequest(tabs[0], null);
+      }
+    });
+  } else if (message.action === "speakText") {
+    // Content script trigger (Command+Click)
+    if (sender.tab) {
+      processSpeakRequest(sender.tab, message.text);
+    }
   }
 });
 

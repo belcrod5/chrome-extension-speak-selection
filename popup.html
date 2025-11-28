@@ -1,15 +1,37 @@
 <!DOCTYPE html>
 <html lang="ja">
+
 <head>
   <meta charset="utf-8" />
   <title>Speak Selection 設定</title>
   <style>
-    body { font-family: sans-serif; margin: 12px; min-width: 280px; }
-    label { display: block; margin-top: 8px; white-space: nowrap; }
-    select, button { width: 100%; padding: 4px; margin-top: 4px; }
-    #status { margin-top: 8px; font-size: 0.9em; color: green; }
+    body {
+      font-family: sans-serif;
+      margin: 12px;
+      min-width: 280px;
+    }
+
+    label {
+      display: block;
+      margin-top: 8px;
+      white-space: nowrap;
+    }
+
+    select,
+    button {
+      width: 100%;
+      padding: 4px;
+      margin-top: 4px;
+    }
+
+    #status {
+      margin-top: 8px;
+      font-size: 0.9em;
+      color: green;
+    }
   </style>
 </head>
+
 <body>
   <label>話者</label>
   <select id="speaker"></select>
@@ -19,7 +41,13 @@
   <input type="range" id="speed" min="0.5" max="2" step="0.1" value="1" />
   <button id="test">テスト再生</button>
   <button id="stop">停止</button>
+  <button id="read-selection">選択を読み上げ</button>
+  <hr>
+  <p style="font-size: 0.8em; color: #666;">
+    テキストを選択して <b>Command + 左クリック</b> でも読み上げできます。
+  </p>
   <div id="status"></div>
   <script src="popup.js"></script>
 </body>
-</html> 
+
+</html>
